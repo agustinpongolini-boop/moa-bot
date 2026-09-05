@@ -100,6 +100,7 @@ def armar_imagen(fila):
         "cuotas": fila.get("cuotas", ""),
         "cuotas_sin_interes": str(fila.get("cuotas_sin_interes", "")).lower() in ("si", "sí", "true", "1"),
         "cupon": fila.get("cupon", ""),
+        "cupon_codigo": fila.get("cupon_codigo", ""),
         "envio_gratis": str(fila.get("envio_gratis", "")).lower() in ("si", "sí", "true", "1"),
         "rank": fila.get("rank", ""),
         "rank_categoria": fila.get("rank_categoria", ""),

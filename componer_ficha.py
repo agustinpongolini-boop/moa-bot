@@ -133,12 +133,22 @@ def _panel(dr, d, x, ancho, y):
         y += 46
 
     if d.get("cupon"):
+        # El codigo del cupon es EL dato que la competencia no publica: se ve
+        # el precio final y, abajo, el codigo que hay que pegar en el checkout.
         y += 8
-        cup = f"  {ars(str(d['cupon']).replace('.',''))} con Cupón  "
-        dr.rounded_rectangle([x, y, x + dr.textlength(cup, font=fuente(32, True)) + 20,
-                              y + 56], radius=8, fill=(232, 242, 255))
-        dr.text((x + 12, y + 12), cup.strip(), font=fuente(32, True), fill=AZUL)
-        y += 74
+        cup = f"  {ars(str(d['cupon']).replace('.',''))} con cupon  "
+        f1 = fuente(32, True)
+        codigo = str(d.get("cupon_codigo", "")).strip().upper()
+        f2 = fuente(26, True)
+        ancho_caja = max(dr.textlength(cup, font=f1) + 20,
+                         (dr.textlength(codigo, font=f2) + 44) if codigo else 0)
+        alto_caja = 56 + (34 if codigo else 0)
+        dr.rounded_rectangle([x, y, x + ancho_caja, y + alto_caja], radius=8,
+                             fill=(232, 242, 255))
+        dr.text((x + 12, y + 12), cup.strip(), font=f1, fill=AZUL)
+        if codigo:
+            dr.text((x + 12, y + 60), f"codigo {codigo}", font=f2, fill=AZUL)
+        y += alto_caja + 18
 
     if d.get("envio_gratis"):
         dr.text((x, y), "Envío gratis", font=fuente(30, True), fill=VERDE)
