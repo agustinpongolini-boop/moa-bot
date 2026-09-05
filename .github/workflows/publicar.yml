@@ -35,9 +35,9 @@ jobs:
       contents: write         # necesario para guardar estado.json de vuelta en el repo
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
@@ -46,6 +46,7 @@ jobs:
 
       - name: Publicar
         env:
+          VENTANA_MIN: ${{ github.event_name == 'workflow_dispatch' && '10080' || '30' }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && !inputs.publicar_de_verdad && 'true' || 'false' }}
           X_API_KEY: ${{ secrets.X_API_KEY }}
           X_API_SECRET: ${{ secrets.X_API_SECRET }}
@@ -54,16 +55,26 @@ jobs:
         run: python publicar.py
 
       - name: Guardar el estado
+        # Guardar el estado NUNCA debe voltear la corrida: si el push falla, el post
+        # ya salio igual. Y antes de pushear se rebasa, para que un re-run sobre un
+        # commit viejo no choque contra un main que ya avanzo.
+        continue-on-error: true
         run: |
           git config user.name  "moa-bot"
           git config user.email "bot@users.noreply.github.com"
           git add datos/estado.json
-          git diff --staged --quiet || git commit -m "estado: $(date -u +%F\ %H:%M) [skip ci]"
-          git push
+          if git diff --staged --quiet; then
+            echo "sin cambios en el estado"
+            exit 0
+          fi
+          git commit -m "estado: $(date -u +%F\ %H:%M) [skip ci]"
+          git fetch origin main
+          git rebase origin/main || git rebase --abort
+          git push origin HEAD:main
 
       - name: Guardar la salida para revisar
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: posts-${{ github.run_number }}
           path: salida/
