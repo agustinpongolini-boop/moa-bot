@@ -106,16 +106,31 @@ def id_post(fila):
     return f"{fila['fecha']}T{fila['hora']}"
 
 
+def ya_procesado(estado, pid):
+    """Publicado o descartado: en cualquiera de los dos casos no se reintenta."""
+    return pid in estado["publicados"] or pid in estado.get("saltados", [])
+
+
 def proximo_pendiente(estado):
-    """El post más viejo que ya debería haber salido y todavía no salió."""
+    """El post más viejo que ya debería haber salido y todavía no salió.
+
+    REGLA: se publica cualquier post PENDIENTE DE HOY cuya hora ya pasó.
+    No se publica nada de días anteriores.
+
+    Antes esto usaba una ventana de 90 minutos y fue un error: el 05/09/2026
+    el cron disparó con MÁS DE DOS HORAS de atraso —el triple de lo que
+    documenta GitHub— y descartó un post que estaba perfecto. Una oferta
+    publicada dos horas tarde sigue sirviendo; una de ayer no. El día es el
+    límite natural, y no depende de la puntualidad de GitHub.
+    """
     ahora = datetime.now(TZ)
-    limite = ahora - timedelta(minutes=VENTANA_MIN)
+    limite = ahora.replace(hour=0, minute=0, second=0, microsecond=0)
     with open(CALENDARIO, encoding="utf-8") as f:
         filas = list(csv.DictReader(f))
 
     candidatos = []
     for fila in filas:
-        if id_post(fila) in estado["publicados"]:
+        if ya_procesado(estado, id_post(fila)):
             continue
         try:
             cuando = datetime.strptime(f"{fila['fecha']} {fila['hora']}",
@@ -125,13 +140,13 @@ def proximo_pendiente(estado):
         if limite <= cuando <= ahora:
             if cupon_vencido(fila, ahora):
                 log(f"cupon vencido, se saltea: {id_post(fila)} - {fila.get('cupon_codigo','')}")
-                estado["publicados"].append(id_post(fila))
+                estado.setdefault("saltados", []).append(id_post(fila))
                 estado.setdefault("cupon_vencido", []).append(id_post(fila))
                 continue
             candidatos.append((cuando, fila))
         elif cuando < limite:
-            # se pasó la ventana: lo marcamos como vencido y seguimos
-            estado["publicados"].append(id_post(fila))
+            # es de un día anterior: se descarta, NO se publica una oferta vieja
+            estado.setdefault("saltados", []).append(id_post(fila))
             estado.setdefault("vencidos", []).append(id_post(fila))
     candidatos.sort(key=lambda c: c[0])
     return candidatos[0][1] if candidatos else None
