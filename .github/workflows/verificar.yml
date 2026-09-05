@@ -1,0 +1,29 @@
+name: Verificar claves de X
+
+# Boton para confirmar que las 4 claves funcionan SIN publicar nada.
+# Hace una sola lectura contra la API (USD 0,010). Correlo cada vez que
+# cargues o regeneres las claves, antes de publicar de verdad.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Verificar
+        env:
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+        run: python verificar_claves.py
