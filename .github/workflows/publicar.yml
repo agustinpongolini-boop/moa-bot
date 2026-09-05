@@ -1,0 +1,71 @@
+name: Publicar en X
+
+# El cron de GitHub. Los horarios van en UTC: Argentina es UTC-3, así que
+# para publicar a las 09:10 hora local hay que poner 12:10 acá.
+#
+#   09:10 AR = 12:10 UTC
+#   13:20 AR = 16:20 UTC
+#   18:40 AR = 21:40 UTC
+#   21:15 AR = 00:15 UTC (del día siguiente)
+#
+# GitHub puede atrasar el disparo 5-15 min cuando está cargado. publicar.py
+# tolera hasta 30 minutos de atraso (VENTANA_MIN) antes de dar el post por vencido.
+
+on:
+  schedule:
+    - cron: "10 12 * * *"
+    - cron: "20 16 * * *"
+    - cron: "40 21 * * *"
+    - cron: "15 0 * * *"
+  workflow_dispatch:          # botón para correrlo a mano cuando quieras
+    inputs:
+      publicar_de_verdad:
+        description: "Publicar en X (si no, solo modo prueba)"
+        type: boolean
+        default: false
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    # Para usar TU computadora como runner en vez de la de GitHub,
+    # cambiá la línea de arriba por:  runs-on: self-hosted
+    # Es lo único que cambia. Todo lo demás funciona igual.
+
+    permissions:
+      contents: write         # necesario para guardar estado.json de vuelta en el repo
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Publicar
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && !inputs.publicar_de_verdad && 'true' || 'false' }}
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+        run: python publicar.py
+
+      - name: Guardar el estado
+        run: |
+          git config user.name  "moa-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add datos/estado.json
+          git diff --staged --quiet || git commit -m "estado: $(date -u +%F\ %H:%M) [skip ci]"
+          git push
+
+      - name: Guardar la salida para revisar
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: posts-${{ github.run_number }}
+          path: salida/
+          retention-days: 7
+          if-no-files-found: ignore
