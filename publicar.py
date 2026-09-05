@@ -39,8 +39,54 @@ VENTANA_MIN = int(os.environ.get("VENTANA_MIN", "30"))
 DRY_RUN = os.environ.get("DRY_RUN", "true").lower() != "false"
 
 
+_resumen = []
+
+
 def log(msg):
-    print(f"[{datetime.now(TZ):%Y-%m-%d %H:%M:%S}] {msg}", flush=True)
+    linea = f"[{datetime.now(TZ):%Y-%m-%d %H:%M:%S}] {msg}"
+    print(linea, flush=True)
+    _resumen.append(linea)
+
+
+def volcar_resumen():
+    """Deja el resultado en la pantalla de Summary de la corrida.
+
+    Sin esto hay que abrir la corrida, entrar al job y expandir el paso para
+    enterarse de que algo salio mal.
+    """
+    ruta = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not ruta:
+        return
+    try:
+        with open(ruta, "a", encoding="utf-8") as f:
+            f.write("## Publicacion\n\n```\n" + "\n".join(_resumen) + "\n```\n")
+    except Exception:
+        pass
+
+
+def cupon_vencido(fila, ahora):
+    """El post lleva un cupon que ya expiro?
+
+    Los cupones de Mercado Libre mueren a las 23:59 del dia que se anuncian.
+    Un post de las 23:15 con un cupon muerto es peor que no publicar: la gente
+    hace click, no puede aplicarlo, y la cuenta pierde credibilidad.
+
+    Si `cupon_vence` esta vacio no bloquea nada. Si esta pero no se entiende,
+    SI bloquea: ante la duda no se promete un descuento que no podemos validar.
+    """
+    v = (fila.get("cupon_vence") or "").strip()
+    if not v:
+        return False
+    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            t = datetime.strptime(v, fmt).replace(tzinfo=TZ)
+            if fmt == "%Y-%m-%d":
+                t = t.replace(hour=23, minute=59)
+            return ahora > t
+        except ValueError:
+            continue
+    log(f"no pude interpretar cupon_vence='{v}' - salteado por las dudas")
+    return True
 
 
 def cargar_estado():
@@ -77,6 +123,11 @@ def proximo_pendiente(estado):
         except ValueError:
             continue
         if limite <= cuando <= ahora:
+            if cupon_vencido(fila, ahora):
+                log(f"cupon vencido, se saltea: {id_post(fila)} - {fila.get('cupon_codigo','')}")
+                estado["publicados"].append(id_post(fila))
+                estado.setdefault("cupon_vencido", []).append(id_post(fila))
+                continue
             candidatos.append((cuando, fila))
         elif cuando < limite:
             # se pasó la ventana: lo marcamos como vencido y seguimos
@@ -197,4 +248,6 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    codigo = main()
+    volcar_resumen()
+    sys.exit(codigo)
