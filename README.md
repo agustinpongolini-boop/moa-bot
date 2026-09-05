@@ -102,8 +102,14 @@ pueden volver a leer desde la interfaz.
 | | |
 |---|---|
 | GitHub Actions | **$0** — 270 min/mes contra 2.000 del plan gratuito *(confirmar límites vigentes)* |
-| X API — posts con link | ~USD 54/mes a 9 posts/día |
-| X API — posts con ID de producto, sin link | **~USD 4/mes** |
+| X API — post de producto (con link) | USD 0,200 c/u |
+| X API — post orgánico (sin link) | USD 0,015 c/u |
 
-La diferencia depende de un test pendiente: **si el ID de producto atribuye la comisión.**
-Generá el ID del mismo producto bajo dos etiquetas distintas — si el código cambia, atribuye.
+A 9 posts/día con la mezcla del plan: **~USD 45-54/mes**.
+
+**El link va siempre en el post de producto.** No se discute: es lo único que genera la comisión, y
+es lo que hacen todas las cuentas del rubro que facturan. El ahorro de postear sin link es falso —
+un post que no se puede clickear no vale $0,015, vale cero.
+
+Verificado el 05/09/2026 en la doc oficial: X cobra por uso, sin plan mensual y sin tier gratuito
+para desarrolladores nuevos. https://docs.x.com/x-api/getting-started/pricing
