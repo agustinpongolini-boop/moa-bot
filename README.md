@@ -36,7 +36,8 @@ todos los días.
 4. **Primera publicación real:** *Run workflow* con `publicar_de_verdad` en `true`.
    Un post. Mirá que salga bien en X antes de dejar el cron suelto.
 
-5. **Listo.** El cron ya está configurado para 09:10, 13:20, 18:40 y 21:15 hora argentina.
+5. **Listo.** El cron ya esta configurado para 7 posts diarios, hora argentina:
+   **09:10 - 12:40 - 15:20 - 18:10 - 19:50 - 21:40 - 23:15**
 
 ---
 
@@ -87,8 +88,12 @@ Los saltos de línea del texto van como `\n`. Si `imagen_url` está vacío, el p
 **No publica dos veces.** `estado.json` guarda el id de cada post publicado, y el workflow lo
 commitea de vuelta al repo. Aunque la máquina que corre sea distinta cada vez, el estado persiste.
 
-**No publica un post viejo.** Si el cron falló y pasaron más de 30 minutos, el post se marca como
+**No publica un post viejo.** Si el cron fallo y pasaron mas de 90 minutos, el post se marca como
 vencido y se saltea. Mejor no publicar que publicar una oferta de ayer con precio de ayer.
+
+La ventana es de 90 minutos y no de 30 por una razon concreta: GitHub atrasa el disparo hasta 60
+minutos cuando esta cargado, y un post que llega tarde **se descarta, no se pospone** - la corrida
+figura como Success igual, asi que la perdida es invisible. A 7 posts diarios pagos eso se nota.
 
 **Si algo falla, queda anotado** en `estado.json` y GitHub te manda un mail.
 
@@ -105,7 +110,8 @@ pueden volver a leer desde la interfaz.
 | X API — post de producto (con link) | USD 0,200 c/u |
 | X API — post orgánico (sin link) | USD 0,015 c/u |
 
-A 9 posts/día con la mezcla del plan: **~USD 45-54/mes**.
+**Ritmo actual: 7 posts/dia.** Con 5 de producto (con link) + 2 organicos: **~USD 31/mes**.
+Si los 7 llevaran link: USD 42/mes.
 
 **El link va siempre en el post de producto.** No se discute: es lo único que genera la comisión, y
 es lo que hacen todas las cuentas del rubro que facturan. El ahorro de postear sin link es falso —

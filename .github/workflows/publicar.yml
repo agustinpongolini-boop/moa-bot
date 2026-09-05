@@ -3,20 +3,31 @@ name: Publicar en X
 # El cron de GitHub. Los horarios van en UTC: Argentina es UTC-3, así que
 # para publicar a las 09:10 hora local hay que poner 12:10 acá.
 #
-#   09:10 AR = 12:10 UTC
-#   13:20 AR = 16:20 UTC
-#   18:40 AR = 21:40 UTC
-#   21:15 AR = 00:15 UTC (del día siguiente)
+# 7 posts por dia, cargados hacia la tarde-noche que es cuando la audiencia
+# argentina esta en X. Ningun horario cae en el minuto :00 a proposito: es
+# cuando todo el mundo programa sus crons y GitHub se congestiona.
 #
-# GitHub puede atrasar el disparo 5-15 min cuando está cargado. publicar.py
-# tolera hasta 30 minutos de atraso (VENTANA_MIN) antes de dar el post por vencido.
+#   09:10 AR = 12:10 UTC     18:10 AR = 21:10 UTC
+#   12:40 AR = 15:40 UTC     19:50 AR = 22:50 UTC
+#   15:20 AR = 18:20 UTC     21:40 AR = 00:40 UTC (dia siguiente)
+#                            23:15 AR = 02:15 UTC (dia siguiente)
+#
+# VENTANA_MIN=90: GitHub atrasa el disparo hasta 60 min cuando esta cargado, y
+# un post que llega tarde se DESCARTA, no se pospone. Con la ventana en 30 se
+# perdian posts pagos de forma silenciosa (la corrida figura como Success igual).
+# 90 minutos cubre el peor atraso documentado. Una oferta publicada una hora
+# tarde sigue siendo valida; un post perdido son USD 0,20 tirados y un hueco
+# en el calendario.
 
 on:
   schedule:
     - cron: "10 12 * * *"
-    - cron: "20 16 * * *"
-    - cron: "40 21 * * *"
-    - cron: "15 0 * * *"
+    - cron: "40 15 * * *"
+    - cron: "20 18 * * *"
+    - cron: "10 21 * * *"
+    - cron: "50 22 * * *"
+    - cron: "40 0 * * *"
+    - cron: "15 2 * * *"
   workflow_dispatch:          # botón para correrlo a mano cuando quieras
     inputs:
       publicar_de_verdad:
@@ -46,7 +57,7 @@ jobs:
 
       - name: Publicar
         env:
-          VENTANA_MIN: ${{ github.event_name == 'workflow_dispatch' && '10080' || '30' }}
+          VENTANA_MIN: ${{ github.event_name == 'workflow_dispatch' && '10080' || '90' }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && !inputs.publicar_de_verdad && 'true' || 'false' }}
           X_API_KEY: ${{ secrets.X_API_KEY }}
           X_API_SECRET: ${{ secrets.X_API_SECRET }}
