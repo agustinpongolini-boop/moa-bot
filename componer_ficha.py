@@ -85,25 +85,13 @@ def pastilla(draw, x, y, texto, fnt, fondo, color=BLANCO, pad=(14, 8)):
     return x + an + pad[0] * 2, y + al
 
 
-def componer(d, salida="foto.png", marca="@MejorOfertaArg"):
-    lienzo = Image.new("RGB", (W, H), BLANCO)
-    dr = ImageDraw.Draw(lienzo)
+def _panel(dr, d, x, ancho, y):
+    """Dibuja la columna de datos desde y y devuelve la y final.
 
-    # --- producto -----------------------------------------------------------
-    if d.get("imagen"):
-        try:
-            prod = bajar_imagen(d["imagen"])
-            caja = COL_IMG - MARGEN
-            prod.thumbnail((caja, H - MARGEN * 2), Image.LANCZOS)
-            lienzo.paste(prod, (MARGEN + (caja - prod.width) // 2,
-                                (H - prod.height) // 2))
-        except Exception as e:
-            dr.text((MARGEN, H // 2), f"(sin imagen: {e})", font=fuente(20), fill=GRIS)
-
-    x = COL_IMG + 40
-    ancho = W - x - MARGEN
-    y = MARGEN + 20
-
+    Se llama dos veces: la primera sobre un lienzo descartable, solo para medir
+    cuanto ocupa; la segunda sobre el lienzo real, ya centrada verticalmente.
+    Sin esto la ficha queda pegada arriba y con medio cuadro en blanco.
+    """
     # --- señales de conversión ---------------------------------------------
     if d.get("rank"):
         xf, _ = pastilla(dr, x, y, "MÁS VENDIDO", fuente(24, True), NARANJA)
@@ -156,8 +144,37 @@ def componer(d, salida="foto.png", marca="@MejorOfertaArg"):
         dr.text((x, y), "Envío gratis", font=fuente(30, True), fill=VERDE)
         y += 46
 
+    return y
+
+
+def componer(d, salida="foto.png", marca="@MejorOfertaArg"):
+    lienzo = Image.new("RGB", (W, H), BLANCO)
+    dr = ImageDraw.Draw(lienzo)
+
+    x = COL_IMG + 40
+    ancho = W - x - MARGEN
+
+    # --- medir la columna de datos para centrarla ---------------------------
+    borrador = ImageDraw.Draw(Image.new("RGB", (W, H), BLANCO))
+    alto = _panel(borrador, d, x, ancho, 0)
+    tope_marca = H - MARGEN - 46            # la linea de la firma
+    y0 = max(MARGEN, (tope_marca - alto) // 2)
+
+    # --- producto -----------------------------------------------------------
+    if d.get("imagen"):
+        try:
+            prod = bajar_imagen(d["imagen"])
+            caja = COL_IMG - MARGEN
+            prod.thumbnail((caja, tope_marca - MARGEN), Image.LANCZOS)
+            lienzo.paste(prod, (MARGEN + (caja - prod.width) // 2,
+                                (tope_marca - prod.height) // 2))
+        except Exception as e:
+            dr.text((MARGEN, H // 2), f"(sin imagen: {e})", font=fuente(20), fill=GRIS)
+
+    _panel(dr, d, x, ancho, y0)
+
     # --- marca --------------------------------------------------------------
-    dr.line([x, H - MARGEN - 46, W - MARGEN, H - MARGEN - 46], fill=GRIS_CLARO, width=2)
+    dr.line([x, tope_marca, W - MARGEN, tope_marca], fill=GRIS_CLARO, width=2)
     dr.text((x, H - MARGEN - 32), marca, font=fuente(26, True), fill=GRIS)
 
     lienzo.save(salida, "PNG", optimize=True)
