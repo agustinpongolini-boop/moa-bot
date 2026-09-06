@@ -216,13 +216,17 @@ def subir_imagen(x, ruta):
         return mid
     log(f"v2 simple no sirvio ({r.status_code}): {r.text[:160]}")
 
-    r = x.post("https://api.x.com/2/media/upload/initialize",
-               json={"media_type": "image/png", "total_bytes": tam,
-                     "media_category": "tweet_image"}, timeout=60)
-    r.raise_for_status()
-    mid = _media_id(r)
-    if not mid:
-        raise RuntimeError(f"initialize no devolvio id: {r.text[:200]}")
+    try:
+        r = x.post("https://api.x.com/2/media/upload/initialize",
+                   json={"media_type": "image/png", "total_bytes": tam,
+                         "media_category": "tweet_image"}, timeout=60)
+        r.raise_for_status()
+        mid = _media_id(r)
+        if not mid:
+            raise RuntimeError(f"initialize no devolvio id: {r.text[:200]}")
+    except Exception as e:
+        log(f"v2 por partes no arranco: {e}")
+        return _subir_v11(x, ruta)
 
     with open(ruta, "rb") as f:
         r = x.post(f"https://api.x.com/2/media/upload/{mid}/append",
@@ -233,6 +237,25 @@ def subir_imagen(x, ruta):
     r = x.post(f"https://api.x.com/2/media/upload/{mid}/finalize", timeout=60)
     r.raise_for_status()
     log(f"imagen subida (v2 por partes): {mid}")
+    return mid
+
+
+def _subir_v11(x, ruta):
+    """Ultimo recurso: el endpoint viejo.
+
+    Funciona a veces. El 05/09 subio bien y X descarto la imagen al armar el
+    tuit; el 06/09 el mismo codigo la adjunto sin problema. Por eso queda
+    detras de v2 y no adelante: es el que mezclaba v1.1 con la API v2 de
+    publicacion, que es de donde salia el descarte silencioso.
+    """
+    with open(ruta, "rb") as f:
+        r = x.post("https://upload.twitter.com/1.1/media/upload.json",
+                   files={"media": f}, timeout=90)
+    r.raise_for_status()
+    mid = _media_id(r)
+    if not mid:
+        raise RuntimeError(f"v1.1 no devolvio media_id: {r.text[:200]}")
+    log(f"imagen subida (v1.1, ultimo recurso): {mid}")
     return mid
 
 
