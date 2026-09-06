@@ -56,6 +56,17 @@ DRY_RUN = os.environ.get("DRY_RUN", "true").lower() != "false"
 MAX_POR_CORRIDA = int(os.environ.get("MAX_POR_CORRIDA", "2"))
 ESPERA_ENTRE = int(os.environ.get("ESPERA_ENTRE", "180"))
 
+# VACIAR LA COLA ANTES DE MEDIANOCHE
+#
+# A las 00:00 todo lo pendiente del dia se descarta: una oferta de ayer con
+# precio de ayer no se publica. Pero entonces la ultima corrida del dia es la
+# ultima oportunidad, y no puede irse dejando posts adentro. A partir de esta
+# hora se publica todo lo que quede, no dos.
+HORA_VACIADO = int(os.environ.get("HORA_VACIADO", "22"))
+
+# Cuantas veces se reintenta una fila que falla antes de darla por perdida.
+MAX_FALLOS = int(os.environ.get("MAX_FALLOS", "3"))
+
 
 _resumen = []
 
@@ -125,11 +136,16 @@ def id_post(fila):
 
 
 def ya_procesado(estado, pid):
-    """Publicado o descartado: en cualquiera de los dos casos no se reintenta."""
-    return pid in estado["publicados"] or pid in estado.get("saltados", [])
+    """Publicado, descartado, o roto sin arreglo: no se reintenta."""
+    if pid in estado["publicados"] or pid in estado.get("saltados", []):
+        return True
+    # Una fila que ya fallo MAX_FALLOS veces no se reintenta mas. Sin este
+    # tope, un imagen_url roto se queda al frente de la cola para siempre y
+    # se lleva puesto el resto del dia, corrida tras corrida.
+    return estado.get("fallos", {}).get(pid, 0) >= MAX_FALLOS
 
 
-def proximo_pendiente(estado):
+def proximo_pendiente(estado, excluidos=()):
     """El post más viejo que ya debería haber salido y todavía no salió.
 
     REGLA: se publica cualquier post PENDIENTE DE HOY cuya hora ya pasó.
@@ -148,7 +164,7 @@ def proximo_pendiente(estado):
 
     candidatos = []
     for fila in filas:
-        if ya_procesado(estado, id_post(fila)):
+        if ya_procesado(estado, id_post(fila)) or id_post(fila) in excluidos:
             continue
         try:
             cuando = datetime.strptime(f"{fila['fecha']} {fila['hora']}",
@@ -235,6 +251,18 @@ def publicar_en_x(texto, imagen=None, respuesta_a=None):
     return r.json()["data"]["id"]
 
 
+def anotar_fallo(estado, pid, motivo):
+    """Suma un fallo a la fila y lo deja anotado."""
+    fallos = estado.setdefault("fallos", {})
+    fallos[pid] = fallos.get(pid, 0) + 1
+    estado["errores"].append({"post": pid, "error": motivo[:200],
+                              "intento": fallos[pid],
+                              "cuando": datetime.now(TZ).isoformat()})
+    if fallos[pid] >= MAX_FALLOS:
+        log(f"{pid} fallo {fallos[pid]} veces - se descarta y sigo con el resto")
+    guardar_estado(estado)
+
+
 def publicar_uno(fila, estado):
     """Publica una fila. Devuelve 0 si salio bien, 1 si no."""
     pid = id_post(fila)
@@ -251,9 +279,7 @@ def publicar_uno(fila, estado):
         imagen = None
     if fila.get("imagen_url") and not imagen:
         log("el post pide foto y no se pudo armar - NO se publica")
-        estado["errores"].append({"post": pid, "error": "no se pudo armar la imagen",
-                                  "cuando": datetime.now(TZ).isoformat()})
-        guardar_estado(estado)
+        anotar_fallo(estado, pid, "no se pudo armar la imagen")
         return 1
 
     texto = fila["texto"].replace("\\n", "\n")
@@ -279,9 +305,7 @@ def publicar_uno(fila, estado):
         estado["publicados"].append(pid)
     except Exception as e:
         log(f"ERROR publicando: {e}")
-        estado["errores"].append({"post": pid, "error": str(e)[:200],
-                                  "cuando": datetime.now(TZ).isoformat()})
-        guardar_estado(estado)
+        anotar_fallo(estado, pid, str(e))
         return 1
 
     guardar_estado(estado)
@@ -295,34 +319,51 @@ def main():
 
     estado = cargar_estado()
     salidos = 0
+    fallados = 0
+    excluidos = set()      # filas que ya fallaron EN ESTA corrida
 
-    for intento in range(MAX_POR_CORRIDA):
-        fila = proximo_pendiente(estado)
+    tope = MAX_POR_CORRIDA
+    if datetime.now(TZ).hour >= HORA_VACIADO:
+        tope = 20
+        log(f"ultima franja del dia: publico todo lo que quede pendiente")
+
+    while salidos < tope:
+        fila = proximo_pendiente(estado, excluidos)
         if not fila:
-            if salidos == 0:
+            if salidos == 0 and fallados == 0:
                 log("sin posts pendientes de hoy")
                 guardar_estado(estado)
             break
 
-        if intento > 0:
-            # Recuperando una corrida perdida. La pausa evita que los dos
-            # posts salgan con segundos de diferencia.
-            log(f"vengo atrasado: hay otro pendiente, espero {ESPERA_ENTRE}s")
+        if salidos > 0:
+            # Segundo post de la misma corrida: o venimos atrasados o estamos
+            # vaciando la cola. La pausa evita que salgan con segundos de
+            # diferencia y parezca un bot descargando la cola.
+            log(f"hay otro pendiente, espero {ESPERA_ENTRE}s")
             if not DRY_RUN:
                 time.sleep(ESPERA_ENTRE)
 
-        codigo = publicar_uno(fila, estado)
-        if codigo != 0:
-            return codigo
+        if publicar_uno(fila, estado) != 0:
+            # NO se corta la corrida. Antes, una fila rota se llevaba puesto
+            # todo lo que venia atras: devolvia 1, main terminaba, y en la
+            # corrida siguiente esa misma fila volvia a estar primera en la
+            # cola. Ahora se aparta y se sigue con la que sigue.
+            excluidos.add(id_post(fila))
+            fallados += 1
+            continue
+
         salidos += 1
 
         if DRY_RUN:
-            # En modo prueba no se toca estado.json, asi que el siguiente
-            # pendiente seria el mismo y quedaria en bucle.
+            # En modo prueba no se toca estado.json: el siguiente pendiente
+            # seria el mismo y quedaria en bucle.
             break
 
     if salidos > 1:
-        log(f"{salidos} posts en esta corrida (recuperando atraso)")
+        log(f"{salidos} posts en esta corrida")
+    if fallados:
+        log(f"{fallados} fila(s) fallaron y quedaron para el proximo intento")
+        return 1
     return 0
 
 
