@@ -176,6 +176,66 @@ def armar_imagen(fila):
     return componer(datos, destino)
 
 
+
+def _media_id(r):
+    """Saca el id de la respuesta, que segun el endpoint viene en dos formas."""
+    try:
+        j = r.json()
+    except Exception:
+        return None
+    d = j.get("data", j)
+    for k in ("id", "media_id_string", "media_id"):
+        if d.get(k):
+            return str(d[k])
+    return None
+
+
+def subir_imagen(x, ruta):
+    """Sube la ficha a X y devuelve el media_id. Falla ruidoso si no puede.
+
+    POR QUE NO USAMOS MAS upload.twitter.com/1.1/media/upload.json
+      El 06/09/2026 dos posts salieron SIN la foto teniendo la ficha bien
+      compuesta. El endpoint v1.1 esta retirado para las cuentas nuevas de
+      pago por uso: no da error, devuelve algo que parece valido, el post se
+      publica y la imagen simplemente no aparece. Silencioso, y por eso caro:
+      se paga el post completo y se pierde lo que mas convierte.
+
+    Se intenta primero la subida simple de v2 y, si no anda, el flujo por
+    partes (initialize / append / finalize). Si ninguna funciona, se levanta
+    una excepcion: el post NO sale sin foto.
+    """
+    tam = os.path.getsize(ruta)
+
+    with open(ruta, "rb") as f:
+        r = x.post("https://api.x.com/2/media/upload",
+                   files={"media": ("ficha.png", f, "image/png")},
+                   data={"media_category": "tweet_image"}, timeout=90)
+    mid = _media_id(r)
+    if mid:
+        log(f"imagen subida (v2 simple): {mid}")
+        return mid
+    log(f"v2 simple no sirvio ({r.status_code}): {r.text[:160]}")
+
+    r = x.post("https://api.x.com/2/media/upload/initialize",
+               json={"media_type": "image/png", "total_bytes": tam,
+                     "media_category": "tweet_image"}, timeout=60)
+    r.raise_for_status()
+    mid = _media_id(r)
+    if not mid:
+        raise RuntimeError(f"initialize no devolvio id: {r.text[:200]}")
+
+    with open(ruta, "rb") as f:
+        r = x.post(f"https://api.x.com/2/media/upload/{mid}/append",
+                   files={"media": ("ficha.png", f, "image/png")},
+                   data={"segment_index": "0"}, timeout=90)
+    r.raise_for_status()
+
+    r = x.post(f"https://api.x.com/2/media/upload/{mid}/finalize", timeout=60)
+    r.raise_for_status()
+    log(f"imagen subida (v2 por partes): {mid}")
+    return mid
+
+
 def publicar_en_x(texto, imagen=None, respuesta_a=None):
     """Sube la imagen y postea. Requiere las 4 claves de X."""
     from requests_oauthlib import OAuth1Session
@@ -190,11 +250,7 @@ def publicar_en_x(texto, imagen=None, respuesta_a=None):
 
     media_ids = []
     if imagen:
-        with open(imagen, "rb") as f:
-            r = x.post("https://upload.twitter.com/1.1/media/upload.json",
-                       files={"media": f}, timeout=60)
-        r.raise_for_status()
-        media_ids.append(str(r.json()["media_id"]))
+        media_ids.append(subir_imagen(x, imagen))
 
     cuerpo = {"text": texto}
     if media_ids:
@@ -223,12 +279,21 @@ def main():
     pid = id_post(fila)
     log(f"post pendiente: {pid} · {fila.get('titulo', '')[:45]}")
 
+    # La foto es requisito del negocio: un post de producto sin imagen rinde
+    # mucho menos y ya se pago igual. Si la fila pide foto y no se puede
+    # armar, se aborta el post en vez de publicarlo pelado.
     try:
         imagen = armar_imagen(fila)
         log(f"imagen: {imagen or 'sin imagen'}")
     except Exception as e:
         log(f"ERROR armando la imagen: {e}")
         imagen = None
+    if fila.get("imagen_url") and not imagen:
+        log("el post pide foto y no se pudo armar - NO se publica")
+        estado["errores"].append({"post": pid, "error": "no se pudo armar la imagen",
+                                  "cuando": datetime.now(TZ).isoformat()})
+        guardar_estado(estado)
+        return 1
 
     texto = fila["texto"].replace("\\n", "\n")
 
