@@ -177,88 +177,6 @@ def armar_imagen(fila):
 
 
 
-def _media_id(r):
-    """Saca el id de la respuesta, que segun el endpoint viene en dos formas."""
-    try:
-        j = r.json()
-    except Exception:
-        return None
-    d = j.get("data", j)
-    for k in ("id", "media_id_string", "media_id"):
-        if d.get(k):
-            return str(d[k])
-    return None
-
-
-def subir_imagen(x, ruta):
-    """Sube la ficha a X y devuelve el media_id. Falla ruidoso si no puede.
-
-    POR QUE NO USAMOS MAS upload.twitter.com/1.1/media/upload.json
-      El 06/09/2026 dos posts salieron SIN la foto teniendo la ficha bien
-      compuesta. El endpoint v1.1 esta retirado para las cuentas nuevas de
-      pago por uso: no da error, devuelve algo que parece valido, el post se
-      publica y la imagen simplemente no aparece. Silencioso, y por eso caro:
-      se paga el post completo y se pierde lo que mas convierte.
-
-    Se intenta primero la subida simple de v2 y, si no anda, el flujo por
-    partes (initialize / append / finalize). Si ninguna funciona, se levanta
-    una excepcion: el post NO sale sin foto.
-    """
-    tam = os.path.getsize(ruta)
-
-    with open(ruta, "rb") as f:
-        r = x.post("https://api.x.com/2/media/upload",
-                   files={"media": ("ficha.png", f, "image/png")},
-                   data={"media_category": "tweet_image"}, timeout=90)
-    mid = _media_id(r)
-    if mid:
-        log(f"imagen subida (v2 simple): {mid}")
-        return mid
-    log(f"v2 simple no sirvio ({r.status_code}): {r.text[:160]}")
-
-    try:
-        r = x.post("https://api.x.com/2/media/upload/initialize",
-                   json={"media_type": "image/png", "total_bytes": tam,
-                         "media_category": "tweet_image"}, timeout=60)
-        r.raise_for_status()
-        mid = _media_id(r)
-        if not mid:
-            raise RuntimeError(f"initialize no devolvio id: {r.text[:200]}")
-    except Exception as e:
-        log(f"v2 por partes no arranco: {e}")
-        return _subir_v11(x, ruta)
-
-    with open(ruta, "rb") as f:
-        r = x.post(f"https://api.x.com/2/media/upload/{mid}/append",
-                   files={"media": ("ficha.png", f, "image/png")},
-                   data={"segment_index": "0"}, timeout=90)
-    r.raise_for_status()
-
-    r = x.post(f"https://api.x.com/2/media/upload/{mid}/finalize", timeout=60)
-    r.raise_for_status()
-    log(f"imagen subida (v2 por partes): {mid}")
-    return mid
-
-
-def _subir_v11(x, ruta):
-    """Ultimo recurso: el endpoint viejo.
-
-    Funciona a veces. El 05/09 subio bien y X descarto la imagen al armar el
-    tuit; el 06/09 el mismo codigo la adjunto sin problema. Por eso queda
-    detras de v2 y no adelante: es el que mezclaba v1.1 con la API v2 de
-    publicacion, que es de donde salia el descarte silencioso.
-    """
-    with open(ruta, "rb") as f:
-        r = x.post("https://upload.twitter.com/1.1/media/upload.json",
-                   files={"media": f}, timeout=90)
-    r.raise_for_status()
-    mid = _media_id(r)
-    if not mid:
-        raise RuntimeError(f"v1.1 no devolvio media_id: {r.text[:200]}")
-    log(f"imagen subida (v1.1, ultimo recurso): {mid}")
-    return mid
-
-
 def publicar_en_x(texto, imagen=None, respuesta_a=None):
     """Sube la imagen y postea. Requiere las 4 claves de X."""
     from requests_oauthlib import OAuth1Session
@@ -273,7 +191,20 @@ def publicar_en_x(texto, imagen=None, respuesta_a=None):
 
     media_ids = []
     if imagen:
-        media_ids.append(subir_imagen(x, imagen))
+        # ENDPOINT v1.1 A PROPOSITO. El 06/09/2026 crei que estaba retirado
+        # porque dos posts parecian haber salido sin foto, y lo reemplace por
+        # v2. Era un error de MEDICION: X carga las imagenes en diferido y yo
+        # las consultaba demasiado pronto. Los dos posts tenian su foto.
+        # No se cambia un componente que anda por uno sin probar.
+        with open(imagen, "rb") as f:
+            r = x.post("https://upload.twitter.com/1.1/media/upload.json",
+                       files={"media": f}, timeout=90)
+        r.raise_for_status()
+        mid = r.json().get("media_id_string") or r.json().get("media_id")
+        if not mid:
+            raise RuntimeError(f"la subida no devolvio media_id: {r.text[:200]}")
+        log(f"imagen subida: {mid}")
+        media_ids.append(str(mid))
 
     cuerpo = {"text": texto}
     if media_ids:
