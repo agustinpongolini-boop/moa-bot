@@ -22,13 +22,15 @@ POR QUÉ NO PUBLICA DOS VECES
 VARIABLES DE ENTORNO (secretos del repo)
   X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_SECRET
   DRY_RUN=false para publicar de verdad (por defecto no publica)
-  VENTANA_MIN  cuántos minutos de atraso se toleran (default 30)
+  MAX_POR_CORRIDA  tope de posts por corrida (default 2, para recuperar atraso)
+  ESPERA_ENTRE     segundos entre el primero y el segundo (default 180)
 """
 
 import csv
 import json
 import os
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 
 CALENDARIO = "datos/calendario.csv"
@@ -37,6 +39,22 @@ SALIDA = "salida"
 TZ = timezone(timedelta(hours=-3))          # Argentina
 VENTANA_MIN = int(os.environ.get("VENTANA_MIN", "30"))
 DRY_RUN = os.environ.get("DRY_RUN", "true").lower() != "false"
+
+# CUANTOS POSTS PUEDE SACAR UNA CORRIDA
+#
+# Antes era uno fijo, y eso perdia un post por dia cada vez que el cron de
+# GitHub no disparaba. Verificado por simulacion el 06/09/2026: si falla la
+# corrida de las 12:40, la de las 15:20 publica el de las 12:40, la de las
+# 18:10 publica el de las 15:20, y asi hasta que el post de las 23:15 queda
+# pendiente. Al dia siguiente cae fuera de la ventana del dia y se descarta
+# en silencio. Justo el de las 23:15 es el que suele llevar el cupon que
+# vence esa noche.
+#
+# Con dos por corrida, una corrida perdida se recupera en la siguiente y el
+# dia cierra completo. El segundo sale despues de una pausa para que no
+# parezca un bot vaciando la cola.
+MAX_POR_CORRIDA = int(os.environ.get("MAX_POR_CORRIDA", "2"))
+ESPERA_ENTRE = int(os.environ.get("ESPERA_ENTRE", "180"))
 
 
 _resumen = []
@@ -217,19 +235,8 @@ def publicar_en_x(texto, imagen=None, respuesta_a=None):
     return r.json()["data"]["id"]
 
 
-def main():
-    if not os.path.exists(CALENDARIO):
-        log(f"no existe {CALENDARIO} — nada que hacer")
-        return 0
-
-    estado = cargar_estado()
-    fila = proximo_pendiente(estado)
-
-    if not fila:
-        log("sin posts pendientes en la ventana")
-        guardar_estado(estado)
-        return 0
-
+def publicar_uno(fila, estado):
+    """Publica una fila. Devuelve 0 si salio bien, 1 si no."""
     pid = id_post(fila)
     log(f"post pendiente: {pid} · {fila.get('titulo', '')[:45]}")
 
@@ -278,6 +285,44 @@ def main():
         return 1
 
     guardar_estado(estado)
+    return 0
+
+
+def main():
+    if not os.path.exists(CALENDARIO):
+        log(f"no existe {CALENDARIO} — nada que hacer")
+        return 0
+
+    estado = cargar_estado()
+    salidos = 0
+
+    for intento in range(MAX_POR_CORRIDA):
+        fila = proximo_pendiente(estado)
+        if not fila:
+            if salidos == 0:
+                log("sin posts pendientes de hoy")
+                guardar_estado(estado)
+            break
+
+        if intento > 0:
+            # Recuperando una corrida perdida. La pausa evita que los dos
+            # posts salgan con segundos de diferencia.
+            log(f"vengo atrasado: hay otro pendiente, espero {ESPERA_ENTRE}s")
+            if not DRY_RUN:
+                time.sleep(ESPERA_ENTRE)
+
+        codigo = publicar_uno(fila, estado)
+        if codigo != 0:
+            return codigo
+        salidos += 1
+
+        if DRY_RUN:
+            # En modo prueba no se toca estado.json, asi que el siguiente
+            # pendiente seria el mismo y quedaria en bucle.
+            break
+
+    if salidos > 1:
+        log(f"{salidos} posts en esta corrida (recuperando atraso)")
     return 0
 
 
