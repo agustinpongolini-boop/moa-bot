@@ -378,6 +378,7 @@ def turno():
 
     while datetime.now(TZ) < fin:
         vueltas += 1
+        refrescar_calendario()
         codigo = main()
         if codigo != 0:
             log("una fila fallo; sigo con el turno igual")
@@ -399,6 +400,31 @@ def turno():
 
     log(f"turno cerrado despues de {vueltas} vueltas")
     return 0
+
+
+def refrescar_calendario():
+    """Trae el calendario mas nuevo del repo antes de cada chequeo.
+
+    Un turno vive 5,5 horas sobre un checkout que se hizo al arrancar. Sin
+    esto, un cupon cargado a las 11:30 no se publicaria hasta el turno
+    siguiente. Se trae SOLO el calendario: estado.json es del turno y no se
+    pisa. Si falla, se sigue con el calendario que ya habia.
+    """
+    if not os.environ.get("GITHUB_ACTIONS"):
+        return
+    import subprocess
+    try:
+        subprocess.run(["git", "fetch", "-q", "origin", "main"], timeout=60,
+                       capture_output=True)
+        # `git show` escribe el archivo sin tocar el index: asi el commit del
+        # estado no arrastra el calendario.
+        r = subprocess.run(["git", "show", f"origin/main:{CALENDARIO}"], timeout=30,
+                           capture_output=True, text=True)
+        if r.returncode == 0 and r.stdout.strip():
+            with open(CALENDARIO, "w", encoding="utf-8", newline="") as f:
+                f.write(r.stdout)
+    except Exception as e:
+        log(f"no pude refrescar el calendario ({e}); sigo con el que tengo")
 
 
 def proxima_hora(ahora):
