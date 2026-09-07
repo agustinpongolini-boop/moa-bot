@@ -1,38 +1,28 @@
 name: Publicar en X
 
-# El cron de GitHub. Los horarios van en UTC: Argentina es UTC-3, así que
-# para publicar a las 09:10 hora local hay que poner 12:10 acá.
+# EL RELOJ ES LA CORRIDA, NO EL CRON
 #
-# 7 posts por dia, cargados hacia la tarde-noche que es cuando la audiencia
-# argentina esta en X. Ningun horario cae en el minuto :00 a proposito: es
-# cuando todo el mundo programa sus crons y GitHub se congestiona.
+# Medido el 07/09/2026 contra la API de Actions: en 48 horas el cron disparo
+# 12 veces, con huecos de entre 1,4 y 7,5 horas. Un cron cada 10 minutos no
+# cambio nada: 6,4 horas sin una sola corrida.
 #
-#   09:10 AR = 12:10 UTC     18:10 AR = 21:10 UTC
-#   12:40 AR = 15:40 UTC     19:50 AR = 22:50 UTC
-#   15:20 AR = 18:20 UTC     21:40 AR = 00:40 UTC (dia siguiente)
-#                            23:15 AR = 02:15 UTC (dia siguiente)
-#
-# VENTANA_MIN=1440 (un dia): el 05/09/2026 el cron disparo con MAS DE DOS
-# HORAS de atraso, el triple de lo que documenta GitHub, y la ventana de 90
-# minutos descarto un post que estaba perfecto. La regla ahora es simple: se
-# publica cualquier post pendiente DE HOY cuya hora ya paso. Una oferta dos
-# horas tarde sigue sirviendo; una de ayer no.
+# La corrida pasa a ser un TURNO: se queda viva hasta 5,5 horas mirando el
+# reloj y publica cada post en la hora del calendario. Al terminar, el evento
+# workflow_run enciende el turno siguiente. El cron queda como respaldo.
 
 on:
   schedule:
-    # Cada 10 minutos. El cron no decide QUE sale: despierta al bot y el bot
-    # publica lo que ya vencio segun la columna `hora` del calendario. El
-    # 06/09/2026 los 7 crons fijos perdieron los posts de las 21:40 y 23:15.
     - cron: "1-59/10 * * * *"
-  workflow_dispatch:          # botón para correrlo a mano cuando quieras
+  workflow_run:
+    workflows: ["Publicar en X"]
+    types: [completed]
+  workflow_dispatch:
     inputs:
       publicar_de_verdad:
         description: "Publicar en X (si no, solo modo prueba)"
         type: boolean
         default: false
 
-# Una sola corrida publicando a la vez: dos simultaneas leerian el mismo
-# estado.json y publicarian el mismo post dos veces (pago doble y repetido).
 concurrency:
   group: publicar-en-x
   cancel-in-progress: false
@@ -40,51 +30,25 @@ concurrency:
 jobs:
   publicar:
     runs-on: ubuntu-latest
-    # Para usar TU computadora como runner en vez de la de GitHub,
-    # cambiá la línea de arriba por:  runs-on: self-hosted
-    # Es lo único que cambia. Todo lo demás funciona igual.
-
+    timeout-minutes: 355
     permissions:
-      contents: write         # necesario para guardar estado.json de vuelta en el repo
-
+      contents: write
     steps:
       - uses: actions/checkout@v5
-
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
-
       - run: pip install -r requirements.txt
-
       - name: Publicar
         env:
-          VENTANA_MIN: ${{ github.event_name == 'workflow_dispatch' && '10080' || '1440' }}
+          MODO: ${{ github.event_name == 'workflow_dispatch' && 'una' || 'turno' }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && !inputs.publicar_de_verdad && 'true' || 'false' }}
           X_API_KEY: ${{ secrets.X_API_KEY }}
           X_API_SECRET: ${{ secrets.X_API_SECRET }}
           X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
           X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
         run: python publicar.py
-
-      - name: Guardar el estado
-        # Guardar el estado NUNCA debe voltear la corrida: si el push falla, el post
-        # ya salio igual. Y antes de pushear se rebasa, para que un re-run sobre un
-        # commit viejo no choque contra un main que ya avanzo.
-        continue-on-error: true
-        run: |
-          git config user.name  "moa-bot"
-          git config user.email "bot@users.noreply.github.com"
-          git add datos/estado.json
-          if git diff --staged --quiet; then
-            echo "sin cambios en el estado"
-            exit 0
-          fi
-          git commit -m "estado: $(date -u +%F\ %H:%M) [skip ci]"
-          git fetch origin main
-          git rebase origin/main || git rebase --abort
-          git push origin HEAD:main
-
       - name: Guardar la salida para revisar
         if: always()
         uses: actions/upload-artifact@v5

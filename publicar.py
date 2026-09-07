@@ -67,6 +67,12 @@ HORA_VACIADO = int(os.environ.get("HORA_VACIADO", "22"))
 # Cuantas veces se reintenta una fila que falla antes de darla por perdida.
 MAX_FALLOS = int(os.environ.get("MAX_FALLOS", "3"))
 
+# MODO=turno -> la corrida se queda viva mirando el reloj y publica a horario.
+# MODO=una   -> publica lo que este vencido y termina (para el boton manual).
+MODO = os.environ.get("MODO", "una")
+BUDGET_MIN = int(os.environ.get("BUDGET_MIN", "330"))   # 5,5 h; el tope del job son 6
+LATIDO_MIN = int(os.environ.get("LATIDO_MIN", "20"))    # cada cuanto revisa si no hay nada cerca
+
 
 _resumen = []
 
@@ -306,10 +312,112 @@ def publicar_uno(fila, estado):
     except Exception as e:
         log(f"ERROR publicando: {e}")
         anotar_fallo(estado, pid, str(e))
+        empujar_estado(pid)
         return 1
 
     guardar_estado(estado)
+    empujar_estado(pid)
     return 0
+
+
+def empujar_estado(pid):
+    """Commitea estado.json al repo APENAS sale el post, no al final del turno.
+
+    Un turno vive 5,5 horas y publica varios posts. Si el estado se guardara
+    recien al final, un job cancelado o caido perderia el registro de todo lo
+    que ya salio — y la corrida siguiente los volveria a publicar: pagados dos
+    veces y repetidos en el timeline. Se commitea despues de cada post.
+
+    Nunca revienta la corrida: si el push falla, el post ya salio igual.
+    """
+    if not os.environ.get("GITHUB_ACTIONS"):
+        return
+    import subprocess
+
+    def correr(*args):
+        return subprocess.run(args, capture_output=True, text=True, timeout=120)
+
+    try:
+        correr("git", "config", "user.name", "moa-bot")
+        correr("git", "config", "user.email", "bot@users.noreply.github.com")
+        correr("git", "add", ESTADO)
+        if correr("git", "diff", "--staged", "--quiet").returncode == 0:
+            return
+        correr("git", "commit", "-m", f"estado: {pid} [skip ci]")
+        correr("git", "fetch", "origin", "main")
+        if correr("git", "rebase", "origin/main").returncode != 0:
+            correr("git", "rebase", "--abort")
+            log("no pude rebasar el estado; lo intento en el proximo post")
+            return
+        r = correr("git", "push", "origin", "HEAD:main")
+        log("estado guardado en el repo" if r.returncode == 0
+            else "no pude pushear el estado; el post SI salio")
+    except Exception as e:
+        log(f"no pude guardar el estado ({e}); el post SI salio")
+
+
+def turno():
+    """Se queda despierto publicando a horario hasta que se acaba el presupuesto.
+
+    POR QUE EXISTE
+        Medido el 07/09/2026 contra la API de GitHub: en 48 horas el cron
+        disparo 12 veces, con huecos de entre 1,4 y 7,5 horas. Poner un cron
+        cada 10 minutos no cambio nada — 6,4 horas sin una sola corrida. El
+        scheduler de GitHub no sirve para publicar a horario.
+
+        La salida no es pedirle mas despertadas: es necesitar menos. Una
+        corrida se queda VIVA, mirando el reloj ella misma, y publica cada
+        post en su horario. GitHub solo tiene que encenderla una vez.
+
+        El tope de un job son 6 horas, asi que un turno cubre ~5,5 y el
+        workflow se re-engancha solo al terminar (evento workflow_run).
+    """
+    fin = datetime.now(TZ) + timedelta(minutes=BUDGET_MIN)
+    log(f"turno abierto hasta las {fin:%H:%M} (presupuesto {BUDGET_MIN} min)")
+    vueltas = 0
+
+    while datetime.now(TZ) < fin:
+        vueltas += 1
+        codigo = main()
+        if codigo != 0:
+            log("una fila fallo; sigo con el turno igual")
+
+        ahora = datetime.now(TZ)
+        prox = proxima_hora(ahora)
+        if prox is None:
+            # No queda nada hoy. No se corta el turno: puede cruzar la
+            # medianoche y encontrarse el calendario de mañana.
+            objetivo = min(fin, ahora + timedelta(minutes=LATIDO_MIN))
+        else:
+            objetivo = min(fin, prox)
+
+        dormir = (objetivo - datetime.now(TZ)).total_seconds()
+        if dormir <= 0:
+            dormir = 30
+        log(f"proximo chequeo {objetivo:%H:%M} (duermo {int(dormir/60)} min)")
+        time.sleep(dormir)
+
+    log(f"turno cerrado despues de {vueltas} vueltas")
+    return 0
+
+
+def proxima_hora(ahora):
+    """La hora del proximo post que todavia no vencio. None si no queda ninguno."""
+    try:
+        with open(CALENDARIO, encoding="utf-8") as f:
+            filas = list(csv.DictReader(f))
+    except OSError:
+        return None
+    futuras = []
+    for fila in filas:
+        try:
+            cuando = datetime.strptime(f"{fila['fecha']} {fila['hora']}",
+                                       "%Y-%m-%d %H:%M").replace(tzinfo=TZ)
+        except ValueError:
+            continue
+        if cuando > ahora:
+            futuras.append(cuando)
+    return min(futuras) if futuras else None
 
 
 def main():
@@ -368,6 +476,8 @@ def main():
 
 
 if __name__ == "__main__":
-    codigo = main()
-    volcar_resumen()
+    try:
+        codigo = turno() if MODO == "turno" and not DRY_RUN else main()
+    finally:
+        volcar_resumen()
     sys.exit(codigo)
