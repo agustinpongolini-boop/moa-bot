@@ -1,0 +1,46 @@
+name: Relevo
+
+# El segundo turno. Se enciende cuando termina "Publicar en X" y, al terminar,
+# vuelve a encender a "Publicar en X". Es el mismo trabajo con otro nombre:
+# GitHub no deja que un workflow se encadene a si mismo, asi que la posta va
+# y viene entre dos. No tiene cron ni boton: solo existe para dar el relevo.
+
+on:
+  workflow_run:
+    workflows: ["Publicar en X"]
+    types: [completed]
+
+concurrency:
+  group: publicar-en-x
+  cancel-in-progress: false
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Publicar
+        env:
+          MODO: turno
+          DRY_RUN: "false"
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+        run: python publicar.py
+      - name: Guardar la salida para revisar
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: relevo-${{ github.run_number }}
+          path: salida/
+          retention-days: 7
+          if-no-files-found: ignore

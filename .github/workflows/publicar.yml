@@ -6,15 +6,16 @@ name: Publicar en X
 # 12 veces, con huecos de entre 1,4 y 7,5 horas. Un cron cada 10 minutos no
 # cambio nada: 6,4 horas sin una sola corrida.
 #
-# La corrida pasa a ser un TURNO: se queda viva hasta 5,5 horas mirando el
-# reloj y publica cada post en la hora del calendario. Al terminar, el evento
-# workflow_run enciende el turno siguiente. El cron queda como respaldo.
+# La corrida es un TURNO: se queda viva hasta 5,5 horas mirando el reloj y
+# publica cada post en la hora del calendario. Al terminar, enciende a
+# "Relevo" (relevo.yml), y Relevo al terminar enciende a este. Un workflow no
+# puede encadenarse a si mismo, por eso son dos. El cron queda como respaldo.
 
 on:
   schedule:
     - cron: "1-59/10 * * * *"
   workflow_run:
-    workflows: ["Publicar en X"]
+    workflows: ["Relevo"]
     types: [completed]
   workflow_dispatch:
     inputs:
