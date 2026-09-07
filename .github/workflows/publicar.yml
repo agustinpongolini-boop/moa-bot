@@ -20,19 +20,22 @@ name: Publicar en X
 
 on:
   schedule:
-    - cron: "10 12 * * *"
-    - cron: "40 15 * * *"
-    - cron: "20 18 * * *"
-    - cron: "10 21 * * *"
-    - cron: "50 22 * * *"
-    - cron: "40 0 * * *"
-    - cron: "15 2 * * *"
+    # Cada 10 minutos. El cron no decide QUE sale: despierta al bot y el bot
+    # publica lo que ya vencio segun la columna `hora` del calendario. El
+    # 06/09/2026 los 7 crons fijos perdieron los posts de las 21:40 y 23:15.
+    - cron: "1-59/10 * * * *"
   workflow_dispatch:          # botón para correrlo a mano cuando quieras
     inputs:
       publicar_de_verdad:
         description: "Publicar en X (si no, solo modo prueba)"
         type: boolean
         default: false
+
+# Una sola corrida publicando a la vez: dos simultaneas leerian el mismo
+# estado.json y publicarian el mismo post dos veces (pago doble y repetido).
+concurrency:
+  group: publicar-en-x
+  cancel-in-progress: false
 
 jobs:
   publicar:
