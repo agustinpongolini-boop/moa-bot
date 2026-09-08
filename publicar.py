@@ -257,6 +257,49 @@ def publicar_en_x(texto, imagen=None, respuesta_a=None):
     return r.json()["data"]["id"]
 
 
+def atrasado(fila, minutos=20):
+    """¿Este post debio salir hace mas de `minutos`?"""
+    try:
+        cuando = datetime.strptime(f"{fila['fecha']} {fila['hora']}",
+                                   "%Y-%m-%d %H:%M").replace(tzinfo=TZ)
+    except ValueError:
+        return False
+    return datetime.now(TZ) - cuando > timedelta(minutes=minutos)
+
+
+def ya_salio_en_x(texto):
+    """Mira los ultimos posts de la cuenta y busca el link de este texto.
+
+    Cuesta una lectura de la API. Se llama solo para posts atrasados. Ante
+    cualquier duda (sin link, error de red, respuesta rara) devuelve False:
+    prefiero un repetido a un post perdido por una consulta que fallo.
+    """
+    import re
+    m = re.search(r"https?://meli\.la/\S+", texto)
+    if not m:
+        return False
+    link = m.group(0).rstrip(".,")
+    try:
+        from requests_oauthlib import OAuth1Session
+        x = OAuth1Session(os.environ["X_API_KEY"], os.environ["X_API_SECRET"],
+                          os.environ["X_ACCESS_TOKEN"], os.environ["X_ACCESS_SECRET"])
+        yo = x.get("https://api.x.com/2/users/me", timeout=20).json()["data"]["id"]
+        r = x.get(f"https://api.x.com/2/users/{yo}/tweets",
+                  params={"max_results": 10, "tweet.fields": "entities,created_at"},
+                  timeout=20)
+        if r.status_code != 200:
+            log(f"no pude consultar X ({r.status_code}); sigo sin el seguro")
+            return False
+        for tw in r.json().get("data", []):
+            urls = [u.get("expanded_url", "") for u in (tw.get("entities") or {}).get("urls", [])]
+            if any(link in u for u in urls) or link in tw.get("text", ""):
+                return True
+        return False
+    except Exception as e:
+        log(f"no pude consultar X ({e}); sigo sin el seguro")
+        return False
+
+
 def anotar_fallo(estado, pid, motivo):
     """Suma un fallo a la fila y lo deja anotado."""
     fallos = estado.setdefault("fallos", {})
@@ -289,6 +332,17 @@ def publicar_uno(fila, estado):
         return 1
 
     texto = fila["texto"].replace("\\n", "\n")
+
+    # SEGURO CONTRA REPETIDOS. Si el post viene atrasado, el estado puede estar
+    # viejo (un turno que publico y no pudo guardar). Antes de pagar otro post,
+    # se mira en X si ese link ya salio. Solo para atrasados: en un post a
+    # horario el estado es confiable y la consulta seria plata tirada.
+    if not DRY_RUN and atrasado(fila) and ya_salio_en_x(texto):
+        log(f"{pid} YA ESTABA EN X - no se repite; lo anoto como publicado")
+        estado["publicados"].append(pid)
+        guardar_estado(estado)
+        empujar_estado(pid)
+        return 0
 
     if DRY_RUN:
         os.makedirs(SALIDA, exist_ok=True)
@@ -345,13 +399,21 @@ def empujar_estado(pid):
             return
         correr("git", "commit", "-m", f"estado: {pid} [skip ci]")
         correr("git", "fetch", "origin", "main")
-        if correr("git", "rebase", "origin/main").returncode != 0:
+        # --autostash: si quedo algun cambio suelto en el arbol (el calendario
+        # refrescado, lo que sea), se guarda, se rebasa y se vuelve a aplicar.
+        # Sin esto git se niega a rebasar y el estado nunca llega al repo.
+        rb = correr("git", "rebase", "--autostash", "origin/main")
+        if rb.returncode != 0:
             correr("git", "rebase", "--abort")
-            log("no pude rebasar el estado; lo intento en el proximo post")
+            log(f"NO PUDE REBASAR EL ESTADO: {(rb.stderr or rb.stdout)[-300:]}")
+            log("EL POST SALIO PERO NO QUEDO REGISTRADO. El proximo turno lo puede repetir.")
             return
         r = correr("git", "push", "origin", "HEAD:main")
-        log("estado guardado en el repo" if r.returncode == 0
-            else "no pude pushear el estado; el post SI salio")
+        if r.returncode == 0:
+            log("estado guardado en el repo")
+        else:
+            log(f"NO PUDE PUSHEAR EL ESTADO: {(r.stderr or r.stdout)[-300:]}")
+            log("EL POST SALIO PERO NO QUEDO REGISTRADO. El proximo turno lo puede repetir.")
     except Exception as e:
         log(f"no pude guardar el estado ({e}); el post SI salio")
 
@@ -418,10 +480,16 @@ def refrescar_calendario():
                        capture_output=True)
         # `git show` escribe el archivo sin tocar el index: asi el commit del
         # estado no arrastra el calendario.
+        #
+        # EN BYTES, NO EN TEXTO. El 07/09/2026 a las 12:40 esto leia con
+        # text=True, que convierte \r\n en \n. El archivo quedaba "modificado"
+        # para git aunque el contenido fuera el mismo, y el rebase del estado
+        # se negaba a correr: el post salio, el registro no llego al repo, y el
+        # turno siguiente lo habria republicado.
         r = subprocess.run(["git", "show", f"origin/main:{CALENDARIO}"], timeout=30,
-                           capture_output=True, text=True)
+                           capture_output=True)
         if r.returncode == 0 and r.stdout.strip():
-            with open(CALENDARIO, "w", encoding="utf-8", newline="") as f:
+            with open(CALENDARIO, "wb") as f:
                 f.write(r.stdout)
     except Exception as e:
         log(f"no pude refrescar el calendario ({e}); sigo con el que tengo")
