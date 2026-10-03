@@ -35,6 +35,8 @@ jobs:
           X_API_SECRET: ${{ secrets.X_API_SECRET }}
           X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
           X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+          GDRIVE_SA_JSON: ${{ secrets.GDRIVE_SA_JSON }}
+          GDRIVE_FOLDER_ID: "10VUe_VpFxyR6KF9srdOmUWqp72zZK6TY"
         run: python publicar.py
       - name: Guardar la salida para revisar
         if: always()
