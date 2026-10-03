@@ -151,6 +151,27 @@ def ya_procesado(estado, pid):
     return estado.get("fallos", {}).get(pid, 0) >= MAX_FALLOS
 
 
+def leer_calendario():
+    """Repo + Drive. Si el mismo post (fecha+hora) esta en los dos, gana Drive:
+    es el lote mas nuevo y es por donde se corrigen precios sin tocar el repo."""
+    filas = {}
+    rutas = [CALENDARIO]
+    try:
+        from sync_drive import sincronizar, DESTINO
+        if sincronizar():
+            rutas.append(DESTINO)
+    except Exception as e:
+        log(f"drive no disponible, sigo con el repo: {e!r}")
+    for ruta in rutas:
+        if not os.path.exists(ruta):
+            continue
+        with open(ruta, encoding="utf-8") as f:
+            for fila in csv.DictReader(f):
+                if fila.get("fecha") and fila.get("hora"):
+                    filas[id_post(fila)] = fila
+    return [filas[k] for k in sorted(filas)]
+
+
 def proximo_pendiente(estado, excluidos=()):
     """El post más viejo que ya debería haber salido y todavía no salió.
 
@@ -165,8 +186,7 @@ def proximo_pendiente(estado, excluidos=()):
     """
     ahora = datetime.now(TZ)
     limite = ahora.replace(hour=0, minute=0, second=0, microsecond=0)
-    with open(CALENDARIO, encoding="utf-8") as f:
-        filas = list(csv.DictReader(f))
+    filas = leer_calendario()
 
     candidatos = []
     for fila in filas:
@@ -497,11 +517,7 @@ def refrescar_calendario():
 
 def proxima_hora(ahora):
     """La hora del proximo post que todavia no vencio. None si no queda ninguno."""
-    try:
-        with open(CALENDARIO, encoding="utf-8") as f:
-            filas = list(csv.DictReader(f))
-    except OSError:
-        return None
+    filas = leer_calendario()
     futuras = []
     for fila in filas:
         try:
@@ -515,8 +531,8 @@ def proxima_hora(ahora):
 
 
 def main():
-    if not os.path.exists(CALENDARIO):
-        log(f"no existe {CALENDARIO} — nada que hacer")
+    if not os.path.exists(CALENDARIO) and not leer_calendario():
+        log(f"no existe {CALENDARIO} ni hay lote en Drive — nada que hacer")
         return 0
 
     estado = cargar_estado()
