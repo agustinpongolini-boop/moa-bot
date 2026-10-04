@@ -95,6 +95,31 @@ def _bajar(s, fid):
     return r.content.decode("utf-8-sig")
 
 
+def _textos(carpeta):
+    """Contenido de cada CSV de la carpeta, del más viejo al más nuevo.
+
+    Dos caminos, según qué traiga el Secret GDRIVE_SA_JSON:
+    - {"url": ..., "token": ...} -> Apps Script publicado como app web, que
+      corre como Agustín y lee la carpeta. Es el camino en uso: la
+      organización de Google Cloud bloquea crear claves de cuenta de servicio
+      (iam.disableServiceAccountKeyCreation, visto el 03/10/2026).
+    - la clave JSON de una cuenta de servicio -> Drive API directa.
+    """
+    info = json.loads(os.environ["GDRIVE_SA_JSON"])
+    if "url" in info:
+        import requests
+
+        r = requests.get(info["url"], params={"t": info["token"]}, timeout=90)
+        r.raise_for_status()
+        j = r.json()
+        if "files" not in j:
+            raise RuntimeError(f"respuesta inesperada del Apps Script: {str(j)[:200]}")
+        return [f["content"] for f in sorted(j["files"], key=lambda f: f["modified"])]
+
+    s = _sesion()
+    return [_bajar(s, a["id"]) for a in _listar(s, carpeta)]
+
+
 def sincronizar(forzar=False):
     """Devuelve True si quedó un calendario_drive.csv usable (nuevo o viejo)."""
     global _ultimo_sync
@@ -107,11 +132,11 @@ def sincronizar(forzar=False):
     _ultimo_sync = time.time()
 
     try:
-        s = _sesion()
-        archivos = _listar(s, carpeta)  # ordenados del más viejo al más nuevo
+        textos = _textos(carpeta)  # ordenados del más viejo al más nuevo
+        archivos = textos
         filas, columnas = {}, None
-        for a in archivos:
-            texto = _bajar(s, a["id"]).lstrip("﻿")
+        for texto in textos:
+            texto = texto.lstrip("﻿")
             lector = csv.DictReader(io.StringIO(texto))
             if columnas is None:
                 columnas = lector.fieldnames
