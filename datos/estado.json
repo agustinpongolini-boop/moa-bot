@@ -482,6 +482,12 @@
    "error": "402 Client Error: Payment Required for url: https://api.twitter.com/2/tweets",
    "intento": 1,
    "cuando": "2026-10-18T17:50:01.300400-03:00"
+  },
+  {
+   "post": "2026-10-18T17:50",
+   "error": "402 Client Error: Payment Required for url: https://api.twitter.com/2/tweets",
+   "intento": 2,
+   "cuando": "2026-10-18T23:35:30.094771-03:00"
   }
  ],
  "vencidos": [
@@ -526,6 +532,6 @@
   "2026-09-25T11:10": 2,
   "2026-09-25T12:30": 1,
   "2026-10-15T15:10": 3,
-  "2026-10-18T17:50": 1
+  "2026-10-18T17:50": 2
  }
 }
